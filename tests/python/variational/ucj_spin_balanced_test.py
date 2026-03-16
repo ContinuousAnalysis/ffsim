@@ -347,3 +347,105 @@ def test_validate():
             ),
             orbital_rotations=orbital_rotations,
         )
+
+
+def test_cisd_matches_manual_conversion():
+    mol = pyscf.gto.Mole()
+    mol.build(
+        atom=[["H", (0, 0, 0)], ["H", (0, 0, 1.8)]],
+        basis="sto-6g",
+        symmetry="Dooh",
+    )
+    scf = pyscf.scf.RHF(mol).run()
+    cisd = scf.CISD().run()
+
+    c0, c1, c2 = cisd.cisdvec_to_amplitudes(cisd.ci, copy=False)
+    t1 = c1 / c0
+    t2 = c2 / c0 - 0.5 * np.einsum("ia,jb->ijab", t1, t1)
+
+    operator_from_cisd = ffsim.UCJOpSpinBalanced.from_cisd(cisd)
+    operator_from_t = ffsim.UCJOpSpinBalanced.from_t_amplitudes(t2, t1=t1)
+
+    assert ffsim.approx_eq(operator_from_cisd, operator_from_t, rtol=1e-12)
+
+
+def test_cisd_matches_manual_conversion_with_options():
+    mol = pyscf.gto.Mole()
+    mol.build(
+        atom=[["H", (0, 0, 0)], ["H", (0, 0, 1.8)]],
+        basis="sto-6g",
+        symmetry="Dooh",
+    )
+    scf = pyscf.scf.RHF(mol).run()
+    cisd = scf.CISD().run()
+
+    c0, c1, c2 = cisd.cisdvec_to_amplitudes(cisd.ci, copy=False)
+    t1 = c1 / c0
+    t2 = c2 / c0 - 0.5 * np.einsum("ia,jb->ijab", t1, t1)
+
+    norb = scf.mo_coeff.shape[1]
+    n_reps = 3
+    pairs_aa = [(p, p) for p in range(norb)]
+    pairs_ab = [(p, p + 1) for p in range(norb - 1)]
+
+    operator_from_cisd = ffsim.UCJOpSpinBalanced.from_cisd(
+        cisd,
+        n_reps=n_reps,
+        interaction_pairs=(pairs_aa, pairs_ab),
+    )
+    operator_from_t = ffsim.UCJOpSpinBalanced.from_t_amplitudes(
+        t2,
+        t1=t1,
+        n_reps=n_reps,
+        interaction_pairs=(pairs_aa, pairs_ab),
+    )
+
+    assert operator_from_cisd.n_reps == n_reps
+    assert operator_from_cisd.final_orbital_rotation is not None
+    assert ffsim.approx_eq(operator_from_cisd, operator_from_t, rtol=1e-12)
+
+
+def test_cisd_explicit_civec_matches_default():
+    mol = pyscf.gto.Mole()
+    mol.build(
+        atom=[["H", (0, 0, 0)], ["H", (0, 0, 1.8)]],
+        basis="sto-6g",
+        symmetry="Dooh",
+    )
+    scf = pyscf.scf.RHF(mol).run()
+    cisd = scf.CISD().run()
+
+    operator_default = ffsim.UCJOpSpinBalanced.from_cisd(cisd)
+    operator_explicit = ffsim.UCJOpSpinBalanced.from_cisd(cisd, civec=cisd.ci)
+
+    assert ffsim.approx_eq(operator_default, operator_explicit, rtol=1e-12)
+
+
+def test_cisd_missing_civec_raises():
+    class DummyCISD:
+        pass
+
+    with pytest.raises(ValueError, match="coefficient vector is unavailable"):
+        ffsim.UCJOpSpinBalanced.from_cisd(DummyCISD())
+
+
+def test_cisd_zero_reference_coefficient_raises():
+    class DummyCISD:
+        ci = np.array([0.0])
+
+        def cisdvec_to_amplitudes(self, civec, copy=False):
+            return 0.0, np.zeros((1, 1)), np.zeros((1, 1, 1, 1))
+
+    with pytest.raises(ValueError, match="reference coefficient c0 is zero"):
+        ffsim.UCJOpSpinBalanced.from_cisd(DummyCISD())
+
+
+def test_cisd_unrestricted_like_amplitudes_raise():
+    class DummyCISD:
+        ci = np.array([1.0])
+
+        def cisdvec_to_amplitudes(self, civec, copy=False):
+            return 1.0, (np.zeros((1, 1)), np.zeros((1, 1))), np.zeros((1, 1, 1, 1))
+
+    with pytest.raises(ValueError, match="restricted"):
+        ffsim.UCJOpSpinBalanced.from_cisd(DummyCISD())
