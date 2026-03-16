@@ -561,12 +561,7 @@ class UCJOpSpinBalanced(
             cisd: A PySCF restricted CISD object.
             civec: Optional CISD coefficient vector. If not specified, ``cisd.ci``
                 is used.
-            n_reps: The number of ansatz repetitions. If not specified, then it is set
-                to the number of terms resulting from the double factorization of the
-                converted t2 amplitudes. If the specified number of repetitions is larger
-                than the number of terms resulting from the double factorization, then
-                the ansatz is padded with additional identity operators up to the
-                specified number of repetitions.
+            n_reps: The number of ansatz repetitions.
             interaction_pairs: Optional restrictions on allowed orbital interactions
                 for the diagonal Coulomb operators.
                 If specified, `interaction_pairs` should be a pair of lists,
@@ -621,8 +616,8 @@ class UCJOpSpinBalanced(
             civec = getattr(cisd, "ci", None)
         if civec is None:
             raise ValueError(
-                "CISD coefficient vector is unavailable. Pass `civec` explicitly or use "
-                "a converged PySCF CISD object with a `ci` attribute."
+                "CISD coefficient vector is unavailable. Pass `civec` explicitly "
+                "or use a converged PySCF CISD object with a `ci` attribute."
             )
 
         c0, c1, c2 = cisd.cisdvec_to_amplitudes(civec, copy=False)
@@ -633,8 +628,8 @@ class UCJOpSpinBalanced(
             )
         if np.isclose(c0, 0.0):
             raise ValueError(
-                "Cannot convert CISD amplitudes because the reference coefficient c0 is "
-                "zero."
+                "Cannot convert CISD amplitudes because the reference coefficient "
+                "c0 is zero."
             )
 
         t1 = c1 / c0
