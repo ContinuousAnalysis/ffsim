@@ -607,7 +607,7 @@ class UCJOpSpinBalanced(
 
         Raises:
             ValueError: The CISD coefficient vector is unavailable.
-            ValueError: The CISD referemce coefficient is too close to zero.
+            ValueError: The CISD reference coefficient is too close to zero.
 
         .. _scipy.optimize.minimize: https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html
         """
