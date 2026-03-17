@@ -13,10 +13,12 @@
 from __future__ import annotations
 
 import itertools
+import math
 from dataclasses import InitVar, dataclass
 from typing import cast
 
 import numpy as np
+import pyscf.ci
 
 from ffsim import gates, linalg, protocols
 from ffsim.linalg.util import unitary_from_parameters, unitary_to_parameters
@@ -526,16 +528,18 @@ class UCJOpSpinBalanced(
         )
 
     @staticmethod
-    def from_cisd(
-        cisd,
+    def from_cisd_vec(
+        cisd_vec,
         *,
-        civec: np.ndarray | None = None,
+        nmo: int,
+        nocc: int,
         n_reps: int | None = None,
         interaction_pairs: tuple[
             list[tuple[int, int]] | None, list[tuple[int, int]] | None
         ]
         | None = None,
         tol: float = 1e-8,
+        c0_tol: float = 1e-8,
         optimize: bool = False,
         method: str = "L-BFGS-B",
         callback=None,
@@ -558,9 +562,7 @@ class UCJOpSpinBalanced(
         :meth:`from_t_amplitudes`.
 
         Args:
-            cisd: A PySCF restricted CISD object.
-            civec: Optional CISD coefficient vector. If not specified, ``cisd.ci``
-                is used.
+            civec: CISD coefficient vector.
             n_reps: The number of ansatz repetitions.
             interaction_pairs: Optional restrictions on allowed orbital interactions
                 for the diagonal Coulomb operators.
@@ -605,31 +607,21 @@ class UCJOpSpinBalanced(
 
         Raises:
             ValueError: The CISD coefficient vector is unavailable.
-            ValueError: The CISD reference coefficient is zero.
-            ValueError: The CISD amplitudes are not from a restricted calculation.
-            ValueError: Interaction pairs list contained duplicate interactions.
-            ValueError: Interaction pairs list contained lower triangular pairs.
+            ValueError: The CISD referemce coefficient is too close to zero.
 
         .. _scipy.optimize.minimize: https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html
         """
-        if civec is None:
-            civec = getattr(cisd, "ci", None)
-        if civec is None:
-            raise ValueError(
-                "CISD coefficient vector is unavailable. Pass `civec` explicitly "
-                "or use a converged PySCF CISD object with a `ci` attribute."
-            )
+        if cisd_vec is None:
+            raise ValueError("CISD coefficient vector `cisd_vec` cannot be None.")
 
-        c0, c1, c2 = cisd.cisdvec_to_amplitudes(civec, copy=False)
-        if not isinstance(c1, np.ndarray) or not isinstance(c2, np.ndarray):
+        c0, c1, c2 = pyscf.ci.cisd.cisdvec_to_amplitudes(
+            cisd_vec, nmo, nocc, copy=False
+        )
+
+        if math.isclose(c0, 0.0, rel_tol=0.0, abs_tol=c0_tol):
             raise ValueError(
-                "UCJOpSpinBalanced.from_cisd requires amplitudes from a restricted "
-                "closed-shell CISD calculation."
-            )
-        if np.isclose(c0, 0.0):
-            raise ValueError(
-                "Cannot convert CISD amplitudes because the reference coefficient "
-                "c0 is zero."
+                f"CISD reference coefficient c0={c0} is too close to zero "
+                f"(abs_tol={c0_tol})."
             )
 
         t1 = c1 / c0
