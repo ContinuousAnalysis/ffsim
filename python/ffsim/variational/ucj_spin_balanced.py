@@ -614,7 +614,6 @@ class UCJOpSpinBalanced(
 
         .. _scipy.optimize.minimize: https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html
         """
-
         c0, c1, c2 = pyscf.ci.cisd.cisdvec_to_amplitudes(
             cisd_vec, norb, nocc, copy=False
         )
