@@ -529,17 +529,17 @@ class UCJOpSpinBalanced(
 
     @staticmethod
     def from_cisd_vec(
-        cisd_vec,
+        cisd_vec: np.ndarray,
         *,
-        nmo: int,
+        norb: int,
         nocc: int,
+        c0_tol: float = 1e-8,
         n_reps: int | None = None,
         interaction_pairs: tuple[
             list[tuple[int, int]] | None, list[tuple[int, int]] | None
         ]
         | None = None,
         tol: float = 1e-8,
-        c0_tol: float = 1e-8,
         optimize: bool = False,
         method: str = "L-BFGS-B",
         callback=None,
@@ -562,7 +562,10 @@ class UCJOpSpinBalanced(
         :meth:`from_t_amplitudes`.
 
         Args:
-            civec: CISD coefficient vector.
+            cisd_vec: CISD coefficient vector.
+            norb: The number of spatial orbitals.
+            nocc: The number of occupied orbitals.
+            c0_tol: Absolute tolerance for the CISD reference coefficient.
             n_reps: The number of ansatz repetitions.
             interaction_pairs: Optional restrictions on allowed orbital interactions
                 for the diagonal Coulomb operators.
@@ -606,22 +609,20 @@ class UCJOpSpinBalanced(
             The UCJ operator with parameters initialized from the CISD amplitudes.
 
         Raises:
-            ValueError: The CISD coefficient vector is unavailable.
-            ValueError: The CISD reference coefficient is too close to zero.
+            ValueError: The CISD reference coefficient is smaller than the
+                specified threshold c0_tol.
 
         .. _scipy.optimize.minimize: https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html
         """
-        if cisd_vec is None:
-            raise ValueError("CISD coefficient vector `cisd_vec` cannot be None.")
 
         c0, c1, c2 = pyscf.ci.cisd.cisdvec_to_amplitudes(
-            cisd_vec, nmo, nocc, copy=False
+            cisd_vec, norb, nocc, copy=False
         )
 
-        if math.isclose(c0, 0.0, rel_tol=0.0, abs_tol=c0_tol):
+        if math.isclose(c0, 0.0, abs_tol=c0_tol):
             raise ValueError(
-                f"CISD reference coefficient c0={c0} is too close to zero "
-                f"(abs_tol={c0_tol})."
+                f"CISD reference coefficient c0={c0} is smaller than the"
+                f"specified threshold, c0_tol={c0_tol}."
             )
 
         t1 = c1 / c0

@@ -299,6 +299,8 @@ def test_cisd_vec_matches_t_amplitudes():
         scf, frozen=[i for i in range(mol.nao_nr()) if i not in active_space]
     ).run()
 
+    ci_before = cisd.ci.copy()
+
     c0, c1, c2 = pyscf.ci.cisd.cisdvec_to_amplitudes(
         cisd.ci, cisd.nmo, cisd.nocc, copy=False
     )
@@ -306,11 +308,12 @@ def test_cisd_vec_matches_t_amplitudes():
     t2 = c2 / c0 - 0.5 * np.einsum("ia,jb->ijab", t1, t1)
 
     operator = ffsim.UCJOpSpinBalanced.from_cisd_vec(
-        cisd.ci, nmo=cisd.nmo, nocc=cisd.nocc
+        cisd.ci, norb=cisd.nmo, nocc=cisd.nocc
     )
     expected = ffsim.UCJOpSpinBalanced.from_t_amplitudes(t2, t1=t1)
 
     assert ffsim.approx_eq(operator, expected, rtol=1e-12)
+    np.testing.assert_allclose(cisd.ci, ci_before)
 
 
 def test_validate():
