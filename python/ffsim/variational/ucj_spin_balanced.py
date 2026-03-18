@@ -548,7 +548,7 @@ class UCJOpSpinBalanced(
         multi_stage_start: int | None = None,
         multi_stage_step: int | None = None,
     ) -> UCJOpSpinBalanced:
-        r"""Initialize the UCJ operator from a PySCF CISD calculation.
+        r"""Initialize the UCJ operator from a CISD vector.
 
         The CISD amplitudes are converted to CC-style amplitudes using
 
