@@ -533,7 +533,7 @@ class UCJOpSpinBalanced(
         *,
         norb: int,
         nocc: int,
-        c0_tol: float = 1e-8,
+        c0_threshold: float = 1e-8,
         n_reps: int | None = None,
         interaction_pairs: tuple[
             list[tuple[int, int]] | None, list[tuple[int, int]] | None
@@ -618,10 +618,10 @@ class UCJOpSpinBalanced(
             cisd_vec, norb, nocc, copy=False
         )
 
-        if math.isclose(c0, 0.0, abs_tol=c0_tol):
+        if math.isclose(c0, 0.0, abs_tol=c0_threshold):
             raise ValueError(
                 f"CISD reference coefficient c0={c0} is smaller than the"
-                f"specified threshold, c0_tol={c0_tol}."
+                f"specified threshold, c0_tol={c0_threshold}."
             )
 
         t1 = c1 / c0
