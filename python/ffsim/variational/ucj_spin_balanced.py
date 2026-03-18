@@ -565,7 +565,7 @@ class UCJOpSpinBalanced(
             cisd_vec: CISD coefficient vector.
             norb: The number of spatial orbitals.
             nocc: The number of occupied orbitals.
-            c0_tol: Absolute tolerance for the CISD reference coefficient.
+            c0_threshold: Absolute value threshold for the reference coefficient. An error is raised if the absolute value of the reference coefficient is smaller than this threshold.
             n_reps: The number of ansatz repetitions.
             interaction_pairs: Optional restrictions on allowed orbital interactions
                 for the diagonal Coulomb operators.
