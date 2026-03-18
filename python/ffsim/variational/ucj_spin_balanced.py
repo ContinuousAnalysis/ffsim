@@ -562,7 +562,7 @@ class UCJOpSpinBalanced(
         :meth:`from_t_amplitudes`.
 
         Args:
-            cisd_vec: CISD coefficient vector.
+            cisd_vec: The CISD vector. This is a one-dimensional array storing the reference coefficient :math:`c_0` in the first entry, followed by the singles and then doubles coefficients.
             norb: The number of spatial orbitals.
             nocc: The number of occupied orbitals.
             c0_threshold: Absolute value threshold for the reference coefficient. An error is raised if the absolute value of the reference coefficient is smaller than this threshold.
