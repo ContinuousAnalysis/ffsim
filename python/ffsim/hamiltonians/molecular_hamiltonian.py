@@ -23,7 +23,14 @@ from typing_extensions import deprecated
 from ffsim import protocols
 from ffsim.contract.two_body import two_body_linop, two_body_linop_unrestricted
 from ffsim.linalg.util import rotate_one_body_tensor, rotate_two_body_tensor
-from ffsim.operators import FermionOperator, cre_a, cre_b, des_a, des_b
+from ffsim.operators import (
+    FermionAction,
+    FermionOperator,
+    cre_a,
+    cre_b,
+    des_a,
+    des_b,
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -186,17 +193,17 @@ class MolecularHamiltonian(
 
     def _fermion_operator_(self) -> FermionOperator:
         """Return a FermionOperator representing the object."""
+        norb = self.norb
+        cre_ops_a, cre_ops_b, des_ops_a, des_ops_b = _fermion_actions(norb)
         coeffs: dict[tuple[tuple[bool, bool, int], ...], complex] = {(): self.constant}
-        for p, q in itertools.product(range(self.norb), repeat=2):
+        for p, q in itertools.product(range(norb), repeat=2):
             coeff = self.one_body_tensor[p, q]
-            coeffs[cre_a(p), des_a(q)] = coeff
-            coeffs[cre_b(p), des_b(q)] = coeff
-        for p, q, r, s in itertools.product(range(self.norb), repeat=4):
-            coeff = 0.5 * self.two_body_tensor[p, q, r, s]
-            coeffs[cre_a(p), cre_a(r), des_a(s), des_a(q)] = coeff
-            coeffs[cre_a(p), cre_b(r), des_b(s), des_a(q)] = coeff
-            coeffs[cre_b(p), cre_a(r), des_a(s), des_b(q)] = coeff
-            coeffs[cre_b(p), cre_b(r), des_b(s), des_b(q)] = coeff
+            coeffs[cre_ops_a[p], des_ops_a[q]] = coeff
+            coeffs[cre_ops_b[p], des_ops_b[q]] = coeff
+        mat = _pair_symmetrized(self.two_body_tensor)
+        _add_same_spin_terms(coeffs, mat, cre_ops_a, des_ops_a)
+        _add_same_spin_terms(coeffs, mat, cre_ops_b, des_ops_b)
+        _add_mixed_spin_terms(coeffs, mat, cre_ops_a, cre_ops_b, des_ops_a, des_ops_b)
         return FermionOperator(coeffs)
 
     @staticmethod
@@ -211,6 +218,10 @@ class MolecularHamiltonian(
 
         Any other terms will cause an error to be raised. No attempt will be made to
         normal-order terms.
+
+        Since a quartic term is unchanged by exchanging its two index pairs, the
+        returned two-body tensor is symmetrized under that exchange. This does not
+        change the Hamiltonian that the tensor represents.
 
         Args:
             op: The FermionOperator from which to initialize the MolecularHamiltonian.
@@ -261,7 +272,10 @@ class MolecularHamiltonian(
                         f"The quartic term {term} is not of the required form "
                         r"a^\dagger_{p\sigma}a^\dagger_{r\tau}a_{s\tau}a_{q\sigma}."
                     )
-                two_body_tensor[p, q, r, s] += 0.5 * coeff
+                # The term describes both orderings of its index pairs, so its
+                # coefficient is split between the two corresponding tensor entries.
+                two_body_tensor[p, q, r, s] += 0.25 * coeff
+                two_body_tensor[r, s, p, q] += 0.25 * coeff
             # other terms
             else:
                 raise ValueError(
@@ -385,14 +399,14 @@ class MolecularHamiltonianSpinless(
 
     def _fermion_operator_(self) -> FermionOperator:
         """Return a FermionOperator representing the object."""
-        op = FermionOperator({(): self.constant})
-        for p, q in itertools.product(range(self.norb), repeat=2):
-            coeff = self.one_body_tensor[p, q]
-            op += FermionOperator({(cre_a(p), des_a(q)): coeff})
-        for p, q, r, s in itertools.product(range(self.norb), repeat=4):
-            coeff = 0.5 * self.two_body_tensor[p, q, r, s]
-            op += FermionOperator({(cre_a(p), cre_a(r), des_a(s), des_a(q)): coeff})
-        return op
+        norb = self.norb
+        cre_ops, _, des_ops, _ = _fermion_actions(norb)
+        coeffs: dict[tuple[tuple[bool, bool, int], ...], complex] = {(): self.constant}
+        for p, q in itertools.product(range(norb), repeat=2):
+            coeffs[cre_ops[p], des_ops[q]] = self.one_body_tensor[p, q]
+        mat = _pair_symmetrized(self.two_body_tensor)
+        _add_same_spin_terms(coeffs, mat, cre_ops, des_ops)
+        return FermionOperator(coeffs)
 
     @staticmethod
     def from_fermion_operator(op: FermionOperator) -> MolecularHamiltonianSpinless:
@@ -409,6 +423,10 @@ class MolecularHamiltonianSpinless(
 
         Since the Hamiltonian is spinless, the fermionic actions in the input operator
         must all carry the spin alpha label (see :func:`cre_a` and :func:`des_a`).
+
+        Since a quartic term is unchanged by exchanging its two index pairs, the
+        returned two-body tensor is symmetrized under that exchange. This does not
+        change the Hamiltonian that the tensor represents.
 
         Args:
             op: The FermionOperator from which to initialize the Hamiltonian.
@@ -453,7 +471,10 @@ class MolecularHamiltonianSpinless(
                         f"{term} is not of the required form "
                         r"a^\dagger_p a^\dagger_r a_s a_q."
                     )
-                two_body_tensor[p, q, r, s] += 2 * coeff
+                # The term describes both orderings of its index pairs, so its
+                # coefficient is split between the two corresponding tensor entries.
+                two_body_tensor[p, q, r, s] += coeff
+                two_body_tensor[r, s, p, q] += coeff
             # other terms
             else:
                 raise ValueError(
@@ -683,26 +704,26 @@ class MolecularHamiltonianUnrestricted(
 
     def _fermion_operator_(self) -> FermionOperator:
         """Return a FermionOperator representing the object."""
+        norb = self.norb
         one_body_a, one_body_b = self.one_body_tensors
         two_body_aa, two_body_ab, two_body_bb = self.two_body_tensors
+        cre_ops_a, cre_ops_b, des_ops_a, des_ops_b = _fermion_actions(norb)
         coeffs: dict[tuple[tuple[bool, bool, int], ...], complex] = {(): self.constant}
-        for p, q in itertools.product(range(self.norb), repeat=2):
-            coeffs[cre_a(p), des_a(q)] = one_body_a[p, q]
-            coeffs[cre_b(p), des_b(q)] = one_body_b[p, q]
-        for p, q, r, s in itertools.product(range(self.norb), repeat=4):
-            coeffs[cre_a(p), cre_a(r), des_a(s), des_a(q)] = (
-                0.5 * two_body_aa[p, q, r, s]
-            )
-            coeffs[cre_b(p), cre_b(r), des_b(s), des_b(q)] = (
-                0.5 * two_body_bb[p, q, r, s]
-            )
-            coeffs[cre_a(p), cre_b(r), des_b(s), des_a(q)] = (
-                0.5 * two_body_ab[p, q, r, s]
-            )
-            # The beta-alpha tensor is the transpose of the alpha-beta tensor.
-            coeffs[cre_b(p), cre_a(r), des_a(s), des_b(q)] = (
-                0.5 * two_body_ab[r, s, p, q]
-            )
+        for p, q in itertools.product(range(norb), repeat=2):
+            coeffs[cre_ops_a[p], des_ops_a[q]] = one_body_a[p, q]
+            coeffs[cre_ops_b[p], des_ops_b[q]] = one_body_b[p, q]
+        _add_same_spin_terms(
+            coeffs, _pair_symmetrized(two_body_aa), cre_ops_a, des_ops_a
+        )
+        _add_same_spin_terms(
+            coeffs, _pair_symmetrized(two_body_bb), cre_ops_b, des_ops_b
+        )
+        # The beta-alpha tensor is the transpose of the alpha-beta tensor, so the
+        # beta-alpha term that each alpha-beta term also represents contributes the same
+        # coefficient, and the two halves sum to the full alpha-beta tensor entry.
+        _add_mixed_spin_terms(
+            coeffs, two_body_ab, cre_ops_a, cre_ops_b, des_ops_a, des_ops_b
+        )
         return FermionOperator(coeffs)
 
     @staticmethod
@@ -723,6 +744,11 @@ class MolecularHamiltonianUnrestricted(
         Unlike :meth:`MolecularHamiltonian.from_fermion_operator`, the coefficients of
         the spin alpha and spin beta terms are stored independently rather than
         averaged, so spin-dependent operators are represented exactly.
+
+        Since a quartic term is unchanged by exchanging its two index pairs, the
+        returned same-spin two-body tensors are symmetrized under that exchange. This
+        does not change the Hamiltonian that they represent. The alpha-beta tensor is
+        not symmetrized, because its two index pairs belong to different spin sectors.
 
         Args:
             op: The FermionOperator from which to initialize the Hamiltonian.
@@ -764,12 +790,17 @@ class MolecularHamiltonianUnrestricted(
             # two-body term
             elif len(term) == 4:
                 (_, _, p), (_, _, r), (_, _, s), (_, _, q) = term
+                # A same-spin term describes both orderings of its index pairs, so its
+                # coefficient is split between the two corresponding tensor entries.
                 if term == (cre_a(p), cre_a(r), des_a(s), des_a(q)):
-                    two_body_tensors[0, p, q, r, s] += 2 * coeff
+                    two_body_tensors[0, p, q, r, s] += coeff
+                    two_body_tensors[0, r, s, p, q] += coeff
                 elif term == (cre_b(p), cre_b(r), des_b(s), des_b(q)):
-                    two_body_tensors[2, p, q, r, s] += 2 * coeff
-                # The alpha-beta and beta-alpha terms both contribute to the alpha-beta
-                # tensor, so each contributes half as much as a same-spin term does.
+                    two_body_tensors[2, p, q, r, s] += coeff
+                    two_body_tensors[2, r, s, p, q] += coeff
+                # A mixed-spin term is not split, because the two index pairs of the
+                # alpha-beta tensor belong to different spin sectors: the alpha-beta and
+                # beta-alpha terms fill the two transposed entries separately.
                 elif term == (cre_a(p), cre_b(r), des_b(s), des_a(q)):
                     two_body_tensors[1, p, q, r, s] += coeff
                 elif term == (cre_b(p), cre_a(r), des_a(s), des_b(q)):
@@ -809,6 +840,113 @@ class MolecularHamiltonianUnrestricted(
                 return False
             return True
         return NotImplemented
+
+
+def _fermion_actions(
+    norb: int,
+) -> tuple[
+    list[FermionAction], list[FermionAction], list[FermionAction], list[FermionAction]
+]:
+    """Return the creation and annihilation actions of each spin and orbital.
+
+    The actions are precomputed so that the loops building a FermionOperator can index
+    into these lists instead of constructing each action on the fly.
+    """
+    return (
+        [cre_a(p) for p in range(norb)],
+        [cre_b(p) for p in range(norb)],
+        [des_a(p) for p in range(norb)],
+        [des_b(p) for p in range(norb)],
+    )
+
+
+def _pair_symmetrized(two_body_tensor: np.ndarray) -> np.ndarray:
+    """Symmetrize a two-body tensor under exchange of its two index pairs.
+
+    Both orderings of the index pairs describe the same fermionic term, so this does not
+    change the operator that the tensor represents. The entry of the symmetrized tensor
+    is the coefficient of the single term that the two orderings share.
+    """
+    return 0.5 * (two_body_tensor + two_body_tensor.transpose(2, 3, 0, 1))
+
+
+def _add_same_spin_terms(
+    coeffs: dict[tuple[tuple[bool, bool, int], ...], complex],
+    mat: np.ndarray,
+    cre_ops: list[FermionAction],
+    des_ops: list[FermionAction],
+) -> None:
+    r"""Add the same-spin two-body terms of one spin sector.
+
+    The term :math:`a^\dagger_p a^\dagger_r a_s a_q` is unchanged by exchanging the
+    index pairs :math:`(p, q)` and :math:`(r, s)`, so only pairs with
+    :math:`(p, q) \leq (r, s)` are iterated over, and ``mat`` must be the
+    pair-symmetrized two-body tensor (see :func:`_pair_symmetrized`), whose entries
+    already combine both orderings.
+
+    The terms with :math:`p = r` are zero operators, but they are still emitted because
+    their coefficients carry the two-body tensor entries that ``from_fermion_operator``
+    reconstructs.
+
+    Args:
+        coeffs: The dictionary of coefficients to add the terms to.
+        mat: The pair-symmetrized two-body tensor of this spin sector.
+        cre_ops: The creation actions of this spin sector, indexed by orbital.
+        des_ops: The annihilation actions of this spin sector, indexed by orbital.
+    """
+    norb = len(cre_ops)
+    for p in range(norb):
+        cre_p = cre_ops[p]
+        for q in range(norb):
+            des_q = des_ops[q]
+            mat_pq = mat[p, q]
+            # (p, q) == (r, s), which only one ordering of the index pairs gives
+            coeffs[cre_p, cre_p, des_q, des_q] = 0.5 * mat_pq[p, q]
+            # (p, q) < (r, s) with r == p
+            for s in range(q + 1, norb):
+                coeffs[cre_p, cre_p, des_ops[s], des_q] = mat_pq[p, s]
+            # (p, q) < (r, s) with r > p
+            for r in range(p + 1, norb):
+                cre_r = cre_ops[r]
+                for s in range(norb):
+                    coeffs[cre_p, cre_r, des_ops[s], des_q] = mat_pq[r, s]
+
+
+def _add_mixed_spin_terms(
+    coeffs: dict[tuple[tuple[bool, bool, int], ...], complex],
+    mat: np.ndarray,
+    cre_ops_a: list[FermionAction],
+    cre_ops_b: list[FermionAction],
+    des_ops_a: list[FermionAction],
+    des_ops_b: list[FermionAction],
+) -> None:
+    r"""Add the mixed-spin two-body terms.
+
+    The term :math:`a^\dagger_{p\alpha} a^\dagger_{r\beta} a_{s\beta} a_{q\alpha}` is
+    unchanged by exchanging the index pairs :math:`(p, q)` and :math:`(r, s)` together
+    with the spins, so it also represents the beta-alpha term with those indices
+    exchanged. Only the alpha-beta terms are emitted, and ``mat`` must hold the summed
+    coefficient of the two orderings.
+
+    Args:
+        coeffs: The dictionary of coefficients to add the terms to.
+        mat: The coefficients of the alpha-beta terms, with the beta-alpha contribution
+            already folded in.
+        cre_ops_a: The spin alpha creation actions, indexed by orbital.
+        cre_ops_b: The spin beta creation actions, indexed by orbital.
+        des_ops_a: The spin alpha annihilation actions, indexed by orbital.
+        des_ops_b: The spin beta annihilation actions, indexed by orbital.
+    """
+    norb = len(cre_ops_a)
+    for p in range(norb):
+        cre_p = cre_ops_a[p]
+        for q in range(norb):
+            des_q = des_ops_a[q]
+            mat_pq = mat[p, q]
+            for r in range(norb):
+                cre_r = cre_ops_b[r]
+                for s in range(norb):
+                    coeffs[cre_p, cre_r, des_ops_b[s], des_q] = mat_pq[r, s]
 
 
 def _unpack_orbital_rotation(
