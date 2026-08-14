@@ -191,15 +191,18 @@ class MolecularHamiltonian(
         """Return a FermionOperator representing the object."""
         cre_ops_a, cre_ops_b, des_ops_a, des_ops_b = _fermion_actions(self.norb)
         one_body = self.one_body_tensor
-        mat = _pair_symmetrized(self.two_body_tensor)
+        # The same tensor serves both spin sectors and the mixed-spin terms.
+        symmetrized_tensor = _pair_symmetrized(self.two_body_tensor)
         return FermionOperator(
             {
                 (): self.constant,
                 **_one_body_terms(one_body, cre_ops_a, des_ops_a),
                 **_one_body_terms(one_body, cre_ops_b, des_ops_b),
-                **_same_spin_terms(mat, cre_ops_a, des_ops_a),
-                **_same_spin_terms(mat, cre_ops_b, des_ops_b),
-                **_mixed_spin_terms(mat, cre_ops_a, cre_ops_b, des_ops_a, des_ops_b),
+                **_same_spin_terms(symmetrized_tensor, cre_ops_a, des_ops_a),
+                **_same_spin_terms(symmetrized_tensor, cre_ops_b, des_ops_b),
+                **_mixed_spin_terms(
+                    symmetrized_tensor, cre_ops_a, cre_ops_b, des_ops_a, des_ops_b
+                ),
             }
         )
 
@@ -397,12 +400,13 @@ class MolecularHamiltonianSpinless(
     def _fermion_operator_(self) -> FermionOperator:
         """Return a FermionOperator representing the object."""
         cre_ops, _, des_ops, _ = _fermion_actions(self.norb)
-        mat = _pair_symmetrized(self.two_body_tensor)
         return FermionOperator(
             {
                 (): self.constant,
                 **_one_body_terms(self.one_body_tensor, cre_ops, des_ops),
-                **_same_spin_terms(mat, cre_ops, des_ops),
+                **_same_spin_terms(
+                    _pair_symmetrized(self.two_body_tensor), cre_ops, des_ops
+                ),
             }
         )
 
@@ -892,7 +896,7 @@ def _one_body_terms(
 
 
 def _same_spin_terms(
-    mat: np.ndarray,
+    symmetrized_tensor: np.ndarray,
     cre_ops: list[FermionAction],
     des_ops: list[FermionAction],
 ) -> _Coeffs:
@@ -900,16 +904,16 @@ def _same_spin_terms(
 
     The term :math:`a^\dagger_p a^\dagger_r a_s a_q` is unchanged by exchanging the
     index pairs :math:`(p, q)` and :math:`(r, s)`, so only pairs with
-    :math:`(p, q) \leq (r, s)` are iterated over, and ``mat`` must be the
-    pair-symmetrized two-body tensor (see :func:`_pair_symmetrized`), whose entries
-    already combine both orderings.
+    :math:`(p, q) \leq (r, s)` are iterated over, and the tensor passed in must be
+    pair-symmetrized so that its entries already combine both orderings.
 
     The terms with :math:`p = r` are zero operators, but they are still returned because
     their coefficients carry the two-body tensor entries that ``from_fermion_operator``
     reconstructs.
 
     Args:
-        mat: The pair-symmetrized two-body tensor of this spin sector.
+        symmetrized_tensor: The two-body tensor of this spin sector, pair-symmetrized
+            by :func:`_pair_symmetrized`.
         cre_ops: The creation actions of this spin sector, indexed by orbital.
         des_ops: The annihilation actions of this spin sector, indexed by orbital.
 
@@ -922,22 +926,22 @@ def _same_spin_terms(
         cre_p = cre_ops[p]
         for q in range(norb):
             des_q = des_ops[q]
-            mat_pq = mat[p, q]
+            tensor_pq = symmetrized_tensor[p, q]
             # (p, q) == (r, s), which only one ordering of the index pairs gives
-            coeffs[cre_p, cre_p, des_q, des_q] = 0.5 * mat_pq[p, q]
+            coeffs[cre_p, cre_p, des_q, des_q] = 0.5 * tensor_pq[p, q]
             # (p, q) < (r, s) with r == p
             for s in range(q + 1, norb):
-                coeffs[cre_p, cre_p, des_ops[s], des_q] = mat_pq[p, s]
+                coeffs[cre_p, cre_p, des_ops[s], des_q] = tensor_pq[p, s]
             # (p, q) < (r, s) with r > p
             for r in range(p + 1, norb):
                 cre_r = cre_ops[r]
                 for s in range(norb):
-                    coeffs[cre_p, cre_r, des_ops[s], des_q] = mat_pq[r, s]
+                    coeffs[cre_p, cre_r, des_ops[s], des_q] = tensor_pq[r, s]
     return coeffs
 
 
 def _mixed_spin_terms(
-    mat: np.ndarray,
+    alpha_beta_tensor: np.ndarray,
     cre_ops_a: list[FermionAction],
     cre_ops_b: list[FermionAction],
     des_ops_a: list[FermionAction],
@@ -948,12 +952,13 @@ def _mixed_spin_terms(
     The term :math:`a^\dagger_{p\alpha} a^\dagger_{r\beta} a_{s\beta} a_{q\alpha}` is
     unchanged by exchanging the index pairs :math:`(p, q)` and :math:`(r, s)` together
     with the spins, so it also represents the beta-alpha term with those indices
-    exchanged. Only the alpha-beta terms are returned, and ``mat`` must hold the summed
-    coefficient of the two orderings.
+    exchanged. Only the alpha-beta terms are returned, and the tensor passed in must
+    already account for the beta-alpha contribution.
 
     Args:
-        mat: The coefficients of the alpha-beta terms, with the beta-alpha contribution
-            already folded in.
+        alpha_beta_tensor: The alpha-beta two-body tensor, whose entry
+            :math:`(p, q, r, s)` is the full coefficient of the term with those indices,
+            including the beta-alpha contribution.
         cre_ops_a: The spin alpha creation actions, indexed by orbital.
         cre_ops_b: The spin beta creation actions, indexed by orbital.
         des_ops_a: The spin alpha annihilation actions, indexed by orbital.
@@ -968,11 +973,11 @@ def _mixed_spin_terms(
         cre_p = cre_ops_a[p]
         for q in range(norb):
             des_q = des_ops_a[q]
-            mat_pq = mat[p, q]
+            tensor_pq = alpha_beta_tensor[p, q]
             for r in range(norb):
                 cre_r = cre_ops_b[r]
                 for s in range(norb):
-                    coeffs[cre_p, cre_r, des_ops_b[s], des_q] = mat_pq[r, s]
+                    coeffs[cre_p, cre_r, des_ops_b[s], des_q] = tensor_pq[r, s]
     return coeffs
 
 
