@@ -1,0 +1,6 @@
+﻿ffsim.random.random\_antisymmetric\_t2\_amplitudes
+==================================================
+
+.. currentmodule:: ffsim.random
+
+.. autofunction:: random_antisymmetric_t2_amplitudes
